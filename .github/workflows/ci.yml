@@ -47,7 +47,7 @@ jobs:
   deploy-backend:
     needs: check
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     environment:
       name: production
       url: https://groq-chat.runasp.net/api/health
@@ -57,30 +57,30 @@ jobs:
         with:
           name: monsterasp-backend
           path: artifacts/monsterasp
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Deploy to MonsterASP using encrypted FTP
-        env:
-          FTP_SERVER: ${{ secrets.MONSTERASP_FTP_SERVER }}
-          FTP_USERNAME: ${{ secrets.MONSTERASP_FTP_USERNAME }}
-          FTP_PASSWORD: ${{ secrets.MONSTERASP_FTP_PASSWORD }}
-          FTP_DIRECTORY: ${{ vars.MONSTERASP_FTP_DIRECTORY || '/wwwroot/' }}
-          FTP_PORT: ${{ vars.MONSTERASP_FTP_PORT || '21' }}
-        run: python scripts/deploy_ftp.py artifacts/monsterasp
-      - name: Verify backend health
+      - name: Ensure Web Deploy is installed
+        shell: pwsh
         run: |
-          python - <<'PY'
-          import json, time, urllib.request
-          for attempt in range(6):
-              try:
-                  with urllib.request.urlopen('https://groq-chat.runasp.net/api/health', timeout=20) as response:
-                      if not json.load(response).get('configured'):
-                          raise RuntimeError('Set GROQ_API_KEY in MonsterASP.')
-                  print('Backend is online and the Groq key is configured.')
-                  break
-              except Exception:
-                  if attempt == 5:
-                      raise RuntimeError('Health check failed. Check MonsterASP logs and GROQ_API_KEY.') from None
-                  time.sleep(5)
-          PY
+          $exe = 'C:\Program Files\IIS\Microsoft Web Deploy V3\msdeploy.exe'
+          if (-not (Test-Path $exe)) {
+            choco install webdeploy --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { throw 'Web Deploy installation failed.' }
+          }
+      - name: Deploy using MonsterASP publish profile
+        shell: pwsh
+        env:
+          MONSTERASP_PUBLISH_PROFILE: ${{ secrets.MONSTERASP_PUBLISH_PROFILE }}
+        run: ./scripts/deploy_webdeploy.ps1 -PublishDirectory ./artifacts/monsterasp
+      - name: Verify backend health
+        shell: pwsh
+        run: |
+          for ($attempt = 1; $attempt -le 6; $attempt++) {
+            try {
+              $health = Invoke-RestMethod 'https://groq-chat.runasp.net/api/health' -TimeoutSec 20
+              if (-not $health.configured) { throw 'Set GROQ_API_KEY in MonsterASP.' }
+              Write-Host 'Backend is online and the Groq key is configured.'
+              break
+            } catch {
+              if ($attempt -eq 6) { throw 'Health check failed. Check MonsterASP logs and GROQ_API_KEY.' }
+              Start-Sleep -Seconds 5
+            }
+          }
