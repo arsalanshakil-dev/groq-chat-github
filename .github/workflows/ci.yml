@@ -1,0 +1,86 @@
+name: Test and deploy
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: chat-ui/package-lock.json
+      - run: dotnet build GroqChat.slnx --configuration Release
+      - run: dotnet run --project GeminiHello.Checks --configuration Release --no-build
+      - run: npm ci
+        working-directory: chat-ui
+      - run: npm test
+        working-directory: chat-ui
+      - run: npm run build
+        working-directory: chat-ui
+      - name: Publish backend
+        run: dotnet publish ChatApi/ChatApi.csproj --configuration Release -p:PublishProfile=MonsterAsp
+      - uses: actions/upload-artifact@v4
+        with:
+          name: monsterasp-backend
+          path: artifacts/monsterasp/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: netlify-frontend
+          path: chat-ui/dist/
+          if-no-files-found: error
+
+  deploy-backend:
+    needs: check
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://groq-chat.runasp.net/api/health
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: monsterasp-backend
+          path: artifacts/monsterasp
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Deploy to MonsterASP using encrypted FTP
+        env:
+          FTP_SERVER: ${{ secrets.MONSTERASP_FTP_SERVER }}
+          FTP_USERNAME: ${{ secrets.MONSTERASP_FTP_USERNAME }}
+          FTP_PASSWORD: ${{ secrets.MONSTERASP_FTP_PASSWORD }}
+          FTP_DIRECTORY: ${{ vars.MONSTERASP_FTP_DIRECTORY || '/wwwroot/' }}
+          FTP_PORT: ${{ vars.MONSTERASP_FTP_PORT || '21' }}
+        run: python scripts/deploy_ftp.py artifacts/monsterasp
+      - name: Verify backend health
+        run: |
+          python - <<'PY'
+          import json, time, urllib.request
+          for attempt in range(6):
+              try:
+                  with urllib.request.urlopen('https://groq-chat.runasp.net/api/health', timeout=20) as response:
+                      if not json.load(response).get('configured'):
+                          raise RuntimeError('Set GROQ_API_KEY in MonsterASP.')
+                  print('Backend is online and the Groq key is configured.')
+                  break
+              except Exception:
+                  if attempt == 5:
+                      raise RuntimeError('Health check failed. Check MonsterASP logs and GROQ_API_KEY.') from None
+                  time.sleep(5)
+          PY
