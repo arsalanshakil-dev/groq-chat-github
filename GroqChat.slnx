@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="ChatApi/ChatApi.csproj" />
+  <Project Path="GeminiHello/GeminiHello.csproj" />
+  <Project Path="GeminiHello.Checks/GeminiHello.Checks.csproj" />
+</Solution>

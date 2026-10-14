@@ -1,0 +1,6 @@
+{
+  "name": "groq-chat-ui", "version": "1.0.0", "private": true, "type": "module",
+  "scripts": { "dev": "vite --host 127.0.0.1", "build": "vite build", "build:dotnet": "vite build --mode dotnet", "preview": "vite preview", "test": "node --test src/chat-context.test.js" },
+  "dependencies": { "react": "^19.0.0", "react-dom": "^19.0.0" },
+  "devDependencies": { "vite": "^6.0.0" }
+}
